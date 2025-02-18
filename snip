@@ -1,0 +1,214 @@
+#!/bin/bash
+
+# Initialize the .snip directory if it doesn't exist
+SNIP_DIR="$HOME/.snip"
+
+if [ ! -d "$SNIP_DIR" ]; then
+    mkdir -p "$SNIP_DIR"
+fi
+
+# ANSI escape codes for colors
+HIGHLIGHT="\033[7m"  # Reverse video
+NORMAL="\033[0m"    # Reset formatting
+
+# Help text
+show_help() {
+    echo "snip - Quick snippet finder"
+    echo "Usage: snip"
+    echo ""
+    echo "Navigation:"
+    echo "  j/k   - Move down/up"
+    echo "  h     - Go back to categories"
+    echo "  l     - Select item"
+    echo "  Enter - Select item"
+    echo "  b/Esc - Go back to categories"
+    echo "  q     - Quit program"
+    exit 0
+}
+
+# Show help if -h or --help is passed
+if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
+    show_help
+fi
+
+# Check if the .snip directory is empty
+if [ -z "$(ls -A $SNIP_DIR)" ]; then
+    echo "No categories found in $SNIP_DIR"
+    echo "Create a directory in $SNIP_DIR to get started"
+    exit 1
+fi
+
+# Global variables for navigation
+current_index=0
+categories=()
+selected_category=""
+snippets=()
+view_mode="categories"  # can be "categories" or "snippets"
+
+# Function to clear screen and move cursor to top
+clear_screen() {
+    tput clear
+    tput cup 0 0
+}
+
+# Function to list categories
+list_categories() {
+    # Find all directories in SNIP_DIR and store them in an array
+    categories=()
+    while IFS= read -r dir; do
+        if [ -d "$dir" ]; then
+            categories+=("$(basename "$dir")")
+        fi
+    done < <(find "$SNIP_DIR" -mindepth 1 -maxdepth 1 -type d)
+}
+
+# Function to list snippets in a category
+list_snippets() {
+    local category="$1"
+    snippets=()
+    while IFS= read -r file; do
+        if [ -f "$file" ]; then
+            snippets+=("$(basename "$file")")
+        fi
+    done < <(find "$SNIP_DIR/$category" -maxdepth 1 -type f)
+}
+
+# Function to draw the current view
+redraw_list() {
+    clear_screen
+    if [ "$view_mode" = "categories" ]; then
+        echo "Snippet Categories:"
+        echo "----------------"
+        # Print each category on a new line with highlighting
+        for i in "${!categories[@]}"; do
+            if [ $i -eq $current_index ]; then
+                echo -e "${HIGHLIGHT}  ${categories[$i]}${NORMAL}"
+            else
+                echo "  ${categories[$i]}"
+            fi
+        done
+    else
+        echo "Snippets in $selected_category:"
+        echo "----------------"
+        if [ ${#snippets[@]} -eq 0 ]; then
+            echo "No snippets in this category"
+        else
+            for i in "${!snippets[@]}"; do
+                if [ $i -eq $current_index ]; then
+                    echo -e "${HIGHLIGHT}  ${snippets[$i]}${NORMAL}"
+                else
+                    echo "  ${snippets[$i]}"
+                fi
+            done
+            
+            # Always show preview in snippet view
+            if [ ${#snippets[@]} -gt 0 ]; then
+                echo -e "\nPreview:"
+                echo "----------------"
+                if [ -f "$SNIP_DIR/$selected_category/${snippets[$current_index]}" ]; then
+                    cat "$SNIP_DIR/$selected_category/${snippets[$current_index]}"
+                else
+                    echo "Error: Snippet file not found"
+                fi
+            fi
+        fi
+    fi
+}
+
+# Function to copy snippet to clipboard
+copy_snippet() {
+    local category="$1"
+    local snippet="$2"
+    if [ -f "$SNIP_DIR/$category/$snippet" ]; then
+        cat "$SNIP_DIR/$category/$snippet" | pbcopy
+        clear_screen
+        echo "Copied to clipboard: $snippet"
+        sleep 1
+        # Return to categories view
+        view_mode="categories"
+        current_index=0
+        redraw_list
+    else
+        echo "Error: Snippet file not found"
+        sleep 1
+        redraw_list
+    fi
+}
+
+# Function to handle category selection
+handle_category_selection() {
+    selected_category="${categories[$current_index]}"
+    view_mode="snippets"
+    current_index=0
+    list_snippets "$selected_category"
+    redraw_list
+}
+
+# Function to handle snippet selection
+handle_snippet_selection() {
+    if [ ${#snippets[@]} -gt 0 ]; then
+        local selected_snippet="${snippets[$current_index]}"
+        copy_snippet "$selected_category" "$selected_snippet"
+    fi
+}
+
+# Function to handle input
+handle_input() {
+    # Read a single character without requiring Enter
+    read -s -n 1 key
+
+    case "$key" in
+        j)
+            # Move down (increment index)
+            if [ "$view_mode" = "categories" ]; then
+                if [ $current_index -lt $((${#categories[@]} - 1)) ]; then
+                    ((current_index++))
+                    redraw_list
+                fi
+            else
+                if [ $current_index -lt $((${#snippets[@]} - 1)) ]; then
+                    ((current_index++))
+                    redraw_list
+                fi
+            fi
+            ;;
+        k)
+            # Move up (decrement index)
+            if [ $current_index -gt 0 ]; then
+                ((current_index--))
+                redraw_list
+            fi
+            ;;
+        l|"")  # l key or Enter
+            # Select current item
+            if [ "$view_mode" = "categories" ]; then
+                handle_category_selection
+            else
+                handle_snippet_selection
+            fi
+            ;;
+        h|$'\e'|b)  # h key, Escape, or b key
+            if [ "$view_mode" = "snippets" ]; then
+                view_mode="categories"
+                current_index=0
+                redraw_list
+            fi
+            ;;
+        q)  # Quit program
+            clear_screen
+            exit 0
+            ;;
+        *)
+            # Ignore other keys
+            ;;
+    esac
+}
+
+# Initialize the display
+list_categories
+redraw_list
+
+# Main input loop
+while true; do
+    handle_input
+done
