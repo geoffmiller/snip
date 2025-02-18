@@ -4,13 +4,17 @@ A vim-style terminal utility for managing and quickly accessing text snippets. O
 
 ![Snip Demo](snip-demo.gif)
 
+> **Note**: Currently tested and supported only on MacOS.
+
 ## Features
 
 - Vim-style navigation (h,j,k,l)
 - Category-based organization
-- Live preview of snippets
+- Automatic file preview
 - Quick clipboard copying
-- Simple and intuitive interface
+- Clean, flicker-free interface
+- Directory and file icons
+- Hierarchical navigation
 
 ## Installation
 
@@ -65,11 +69,19 @@ sudo ln -s "$(pwd)/snip" /usr/local/bin/snip
 ### Navigation
 
 - `j/k` - Move down/up
-- `h` - Go back to categories
-- `l` - Select item
-- `Enter` - Select item
-- `b/Esc` - Go back to categories
+- `h` - Go back to parent directory
+- `l` - Enter directory or select file
+- `Enter` - Enter directory or select file
+- `b/Esc` - Go back to parent directory
 - `q` - Quit program
+
+### Features
+
+- **Automatic Preview**: File contents are automatically displayed when navigating to a file
+- **Directory Icons**: Folders are marked with 📁 and files with 📄
+- **Clean Interface**: Flicker-free display with proper line clearing
+- **Clipboard Integration**: Selected snippets are automatically copied to clipboard
+- **Hierarchical Navigation**: Easily navigate through nested categories
 
 ### Directory Structure
 
@@ -77,27 +89,31 @@ Snippets are stored in `~/.snip/` with the following structure:
 ```
 ~/.snip/
 ├── code/
-│   ├── hello.py
-│   └── fetch.js
+│   ├── python/
+│   │   └── hello.py
+│   └── javascript/
+│       └── fetch.js
 ├── notes/
 │   ├── meeting.txt
 │   └── todo.txt
-└── other_category/
-    └── ...
+├── other_category/
+│   └── ...
+└── welcome.txt
 ```
 
 ### Example Usage
 
 1. Create some categories:
 ```bash
-mkdir -p ~/.snip/code ~/.snip/notes
+mkdir -p ~/.snip/code/{python,javascript} ~/.snip/notes
 ```
 
 2. Add some snippets:
 ```bash
 # Add a Python snippet
 echo 'def hello_world():
-    print("Hello, World!")' > ~/.snip/code/hello.py
+    print("Hello, World!")
+    return True' > ~/.snip/code/python/hello.py
 
 # Add a meeting template
 echo 'Meeting Notes
@@ -111,17 +127,19 @@ Action Items:
 ```
 
 3. Run `snip` and:
-   - Navigate to a category using `j/k`
-   - Press `l` or `Enter` to view snippets
-   - Navigate to a snippet
-   - Press `l` or `Enter` to copy to clipboard
+   - Navigate through categories using `j/k`
+   - Press `l` or `Enter` to enter directories
+   - Navigate to a file to see its preview
+   - Press `l` or `Enter` on a file to copy to clipboard
+   - Press `h` or `Esc` to go back up a level
 
 ## Tips
 
-- Organize snippets into logical categories
+- Organize snippets into logical categories and subcategories
 - Use clear, descriptive filenames
 - Add file extensions to help identify snippet types
 - Keep snippets focused and reusable
+- Use nested directories for better organization
 
 ## Troubleshooting
 

@@ -7,9 +7,26 @@ if [ ! -d "$SNIP_DIR" ]; then
     mkdir -p "$SNIP_DIR"
 fi
 
-# ANSI escape codes for colors
+# ANSI escape codes for colors and screen control
 HIGHLIGHT="\033[7m"  # Reverse video
 NORMAL="\033[0m"    # Reset formatting
+CLEAR_SCREEN="\033[2J\033[H"  # Clear screen and move to home position
+CLEAR_LINE="\033[K"  # Clear from cursor to end of line
+SAVE_CURSOR="\033[s"  # Save cursor position
+RESTORE_CURSOR="\033[u"  # Restore cursor position
+
+# Initialize terminal variables
+TERM_HEIGHT=$(tput lines)
+TERM_WIDTH=$(tput cols)
+
+# Cleanup function
+cleanup() {
+    tput rmcup  # Restore original screen
+    exit 0
+}
+
+# Set up trap for clean exit
+trap cleanup EXIT INT TERM
 
 # Help text
 show_help() {
@@ -18,10 +35,10 @@ show_help() {
     echo ""
     echo "Navigation:"
     echo "  j/k   - Move down/up"
-    echo "  h     - Go back to categories"
-    echo "  l     - Select item"
-    echo "  Enter - Select item"
-    echo "  b/Esc - Go back to categories"
+    echo "  h     - Go back to parent directory"
+    echo "  l     - Enter directory or select file"
+    echo "  Enter - Enter directory or select file"
+    echo "  b/Esc - Go back to parent directory"
     echo "  q     - Quit program"
     exit 0
 }
@@ -33,122 +50,211 @@ fi
 
 # Check if the .snip directory is empty
 if [ -z "$(ls -A $SNIP_DIR)" ]; then
-    echo "No categories found in $SNIP_DIR"
-    echo "Create a directory in $SNIP_DIR to get started"
+    echo "No items found in $SNIP_DIR"
+    echo "Create files or directories to get started"
     exit 1
 fi
 
 # Global variables for navigation
 current_index=0
-categories=()
-selected_category=""
-snippets=()
-view_mode="categories"  # can be "categories" or "snippets"
+current_path=""
+items=()
+item_types=()
+screen_buffer=""
+last_list_size=0
 
-# Function to clear screen and move cursor to top
-clear_screen() {
-    tput clear
-    tput cup 0 0
+# Switch to alternate screen buffer
+tput smcup
+
+# Function to add line to screen buffer
+add_to_buffer() {
+    screen_buffer+="$1\n"
 }
 
-# Function to list categories
-list_categories() {
-    # Find all directories in SNIP_DIR and store them in an array
-    categories=()
+# Function to move cursor and clear line
+clear_line() {
+    tput cup "$1" 0
+    echo -ne "$CLEAR_LINE"
+}
+
+# Function to list items in current directory
+list_items() {
+    local path="$1"
+    items=()
+    item_types=()
+    
+    # List directories first
     while IFS= read -r dir; do
         if [ -d "$dir" ]; then
-            categories+=("$(basename "$dir")")
+            items+=("$(basename "$dir")")
+            item_types+=("dir")
         fi
-    done < <(find "$SNIP_DIR" -mindepth 1 -maxdepth 1 -type d)
-}
-
-# Function to list snippets in a category
-list_snippets() {
-    local category="$1"
-    snippets=()
+    done < <(find "$SNIP_DIR/$path" -mindepth 1 -maxdepth 1 -type d)
+    
+    # Then list files
     while IFS= read -r file; do
         if [ -f "$file" ]; then
-            snippets+=("$(basename "$file")")
+            items+=("$(basename "$file")")
+            item_types+=("file")
         fi
-    done < <(find "$SNIP_DIR/$category" -maxdepth 1 -type f)
+    done < <(find "$SNIP_DIR/$path" -mindepth 1 -maxdepth 1 -type f)
 }
 
 # Function to draw the current view
 redraw_list() {
-    clear_screen
-    if [ "$view_mode" = "categories" ]; then
-        echo "Snippet Categories:"
-        echo "----------------"
-        # Print each category on a new line with highlighting
-        for i in "${!categories[@]}"; do
-            if [ $i -eq $current_index ]; then
-                echo -e "${HIGHLIGHT}  ${categories[$i]}${NORMAL}"
-            else
-                echo "  ${categories[$i]}"
-            fi
-        done
+    # Save cursor position and hide it
+    tput civis  # Hide cursor
+    
+    # Keep track of current line
+    local current_line=0
+    
+    # Build header
+    tput cup $current_line 0
+    if [ -z "$current_path" ]; then
+        echo -ne "Location: /$CLEAR_LINE"
     else
-        echo "Snippets in $selected_category:"
-        echo "----------------"
-        if [ ${#snippets[@]} -eq 0 ]; then
-            echo "No snippets in this category"
+        echo -ne "Location: /$current_path$CLEAR_LINE"
+    fi
+    
+    ((current_line++))
+    tput cup $current_line 0
+    echo -ne "----------------$CLEAR_LINE"
+    
+    ((current_line++))
+    
+    # Show ".." for going up a level if not in root
+    if [ -n "$current_path" ]; then
+        tput cup $current_line 0
+        if [ $current_index -eq -1 ]; then
+            echo -ne "$HIGHLIGHT  ..$NORMAL$CLEAR_LINE"
         else
-            for i in "${!snippets[@]}"; do
-                if [ $i -eq $current_index ]; then
-                    echo -e "${HIGHLIGHT}  ${snippets[$i]}${NORMAL}"
-                else
-                    echo "  ${snippets[$i]}"
-                fi
-            done
-            
-            # Always show preview in snippet view
-            if [ ${#snippets[@]} -gt 0 ]; then
-                echo -e "\nPreview:"
-                echo "----------------"
-                if [ -f "$SNIP_DIR/$selected_category/${snippets[$current_index]}" ]; then
-                    cat "$SNIP_DIR/$selected_category/${snippets[$current_index]}"
-                else
-                    echo "Error: Snippet file not found"
-                fi
-            fi
+            echo -ne "  ..$CLEAR_LINE"
         fi
+        ((current_line++))
+    fi
+    
+    # Build item list
+    for i in "${!items[@]}"; do
+        tput cup $current_line 0
+        local item_text=""
+        if [ "${item_types[$i]}" = "dir" ]; then
+            item_text="  📁 ${items[$i]}"
+        else
+            item_text="  📄 ${items[$i]}"
+        fi
+        
+        if [ $i -eq $current_index ]; then
+            echo -ne "$HIGHLIGHT$item_text$NORMAL$CLEAR_LINE"
+        else
+            echo -ne "$item_text$CLEAR_LINE"
+        fi
+        ((current_line++))
+    done
+    
+    # Add preview section for files
+    if [ $current_index -ge 0 ] && [ "${item_types[$current_index]}" = "file" ]; then
+        # Clear the blank line before preview
+        tput cup $current_line 0
+        echo -ne "$CLEAR_LINE"
+        ((current_line++))
+        
+        tput cup $current_line 0
+        echo -ne "Preview:$CLEAR_LINE"
+        
+        ((current_line++))
+        tput cup $current_line 0
+        echo -ne "----------------$CLEAR_LINE"
+        
+        ((current_line++))
+        # Add file content with proper positioning
+        while IFS= read -r line; do
+            tput cup $current_line 0
+            echo -ne "$line$CLEAR_LINE"
+            ((current_line++))
+        done < "$SNIP_DIR/$current_path/${items[$current_index]}"
+    fi
+    
+    # Clear any remaining lines from the previous view
+    while ((current_line < last_list_size)); do
+        tput cup $current_line 0
+        echo -ne "$CLEAR_LINE"
+        ((current_line++))
+    done
+    
+    # Update last list size
+    last_list_size=$current_line
+    
+    # Show cursor again
+    tput cnorm
+}
+
+# Function to copy file contents to clipboard
+copy_snippet() {
+    local path="$1"
+    local file="$2"
+    local full_path="$SNIP_DIR/$path/$file"
+    
+    if [ -f "$full_path" ]; then
+        cat "$full_path" | pbcopy
+        screen_buffer=""
+        add_to_buffer "Copied to clipboard: $file"
+        tput cup 0 0
+        echo -ne "$screen_buffer$CLEAR_TO_END"
+        sleep 1
+    else
+        screen_buffer=""
+        add_to_buffer "Error: File not found"
+        tput cup 0 0
+        echo -ne "$screen_buffer$CLEAR_TO_END"
+        sleep 1
     fi
 }
 
-# Function to copy snippet to clipboard
-copy_snippet() {
-    local category="$1"
-    local snippet="$2"
-    if [ -f "$SNIP_DIR/$category/$snippet" ]; then
-        cat "$SNIP_DIR/$category/$snippet" | pbcopy
-        clear_screen
-        echo "Copied to clipboard: $snippet"
-        sleep 1
-        # Return to categories view
-        view_mode="categories"
+# Function to handle selection
+handle_selection() {
+    # Handle ".." selection
+    if [ $current_index -eq -1 ]; then
+        # Go up one level
+        current_path=$(dirname "$current_path")
+        [ "$current_path" = "." ] && current_path=""
         current_index=0
+        list_items "$current_path"
+        redraw_list
+        return
+    fi
+
+    local selected_item="${items[$current_index]}"
+    local item_type="${item_types[$current_index]}"
+    
+    if [ "$item_type" = "dir" ]; then
+        # Enter directory
+        [ -n "$current_path" ] && current_path="$current_path/"
+        current_path="${current_path}${selected_item}"
+        current_index=0
+        list_items "$current_path"
         redraw_list
     else
-        echo "Error: Snippet file not found"
-        sleep 1
+        # Copy file contents to clipboard
+        copy_snippet "$current_path" "$selected_item"
+        # Return to parent directory
+        if [ -n "$current_path" ]; then
+            current_path=$(dirname "$current_path")
+            [ "$current_path" = "." ] && current_path=""
+        fi
+        current_index=0
+        list_items "$current_path"
         redraw_list
     fi
 }
 
-# Function to handle category selection
-handle_category_selection() {
-    selected_category="${categories[$current_index]}"
-    view_mode="snippets"
-    current_index=0
-    list_snippets "$selected_category"
-    redraw_list
-}
-
-# Function to handle snippet selection
-handle_snippet_selection() {
-    if [ ${#snippets[@]} -gt 0 ]; then
-        local selected_snippet="${snippets[$current_index]}"
-        copy_snippet "$selected_category" "$selected_snippet"
+# Function to go up one directory level
+go_up_directory() {
+    if [ -n "$current_path" ]; then
+        current_path=$(dirname "$current_path")
+        [ "$current_path" = "." ] && current_path=""
+        current_index=0
+        list_items "$current_path"
+        redraw_list
     fi
 }
 
@@ -159,44 +265,32 @@ handle_input() {
 
     case "$key" in
         j)
-            # Move down (increment index)
-            if [ "$view_mode" = "categories" ]; then
-                if [ $current_index -lt $((${#categories[@]} - 1)) ]; then
-                    ((current_index++))
-                    redraw_list
-                fi
-            else
-                if [ $current_index -lt $((${#snippets[@]} - 1)) ]; then
-                    ((current_index++))
-                    redraw_list
-                fi
+            # Account for ".." entry in index calculation
+            local max_index=$((${#items[@]} - 1))
+            [ -n "$current_path" ] && max_index=$((max_index + 1))
+            
+            if [ $current_index -lt $max_index ]; then
+                ((current_index++))
+                redraw_list
             fi
             ;;
         k)
-            # Move up (decrement index)
-            if [ $current_index -gt 0 ]; then
+            local min_index=0
+            [ -n "$current_path" ] && min_index=-1
+            
+            if [ $current_index -gt $min_index ]; then
                 ((current_index--))
                 redraw_list
             fi
             ;;
-        l|"")  # l key or Enter
-            # Select current item
-            if [ "$view_mode" = "categories" ]; then
-                handle_category_selection
-            else
-                handle_snippet_selection
-            fi
+        l|"")
+            handle_selection
             ;;
-        h|$'\e'|b)  # h key, Escape, or b key
-            if [ "$view_mode" = "snippets" ]; then
-                view_mode="categories"
-                current_index=0
-                redraw_list
-            fi
+        h|$'\e'|b)
+            go_up_directory
             ;;
         q)  # Quit program
-            clear_screen
-            exit 0
+            cleanup
             ;;
         *)
             # Ignore other keys
@@ -205,7 +299,7 @@ handle_input() {
 }
 
 # Initialize the display
-list_categories
+list_items "$current_path"
 redraw_list
 
 # Main input loop
