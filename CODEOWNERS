@@ -1,0 +1,7 @@
+# These owners will be the default owners for everything in
+# the repo. They will be requested for review when someone 
+# opens a pull request.
+* @your-github-username
+
+# Specific file ownership
+/snip @geoffmiller
